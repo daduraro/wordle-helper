@@ -12,8 +12,7 @@ RUN cargo build --release --locked --target "$TARGET" \
     && strip wordler
 
 FROM gcr.io/distroless/static
-COPY --from=builder /opt/wordler/wordler /opt/wordler/wordler
-COPY ./data/corpus.txt /opt/wordler/data/corpus.txt
-WORKDIR /opt/wordler
+COPY --from=builder /opt/wordler/wordler /bin/wordler
+ENV CORPUS_FILE /data/corpus.txt
 EXPOSE 8080
-ENTRYPOINT ["/opt/wordler/wordler"]
+ENTRYPOINT ["/bin/wordler"]
