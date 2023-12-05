@@ -1,4 +1,4 @@
-use std::{fs, iter::zip};
+use std::{fs, iter::zip, env};
 use regex::Regex;
 use itertools::Itertools;
 
@@ -79,12 +79,14 @@ fn merge(a: WordClue, b: WordClue) -> Result<WordClue, String> {
     })
 }
 
+#[derive(Debug)]
 enum LetterAnswerType {
     Correct,
     Incorrect,
     NotInWord,
 }
 
+#[derive(Debug)]
 struct LetterAnswer {
     letter: char,
     answer: LetterAnswerType,
@@ -144,23 +146,26 @@ fn extract_clue(word: WordAnswer) -> WordClue {
 }
 
 fn extract_answer(token: &str) -> Result<WordAnswer, String> {
-    let pattern = Regex::new(r"([A-Za-zçÇ])([0-2])").unwrap();
-    let check_pattern = Regex::new(r"^([A-Za-zçÇ][0-2])+$").unwrap();
-    if !check_pattern.is_match(token) {
-        return Err(format!("Invalid token: {}", token));
+    let re = Regex::new(r"^([A-Za-zçÇ]+)([0-2]+)$").unwrap();
+
+    let (_, [letters, numbers]) = re.captures(token).map(|caps| caps.extract())
+        .ok_or(format!("Invalid token: {:?}", token))?;
+
+    if letters.is_empty() {
+        return Err(format!("Invalid token: {:?}", token));
     }
 
-    pattern.captures_iter(token).map(|c| {
-        let (_, [letter, answer]) = c.extract();
-        let letter = letter.to_uppercase().chars().next().unwrap();
-        let answer = match answer.chars().next().unwrap() {
-            '0' => LetterAnswerType::NotInWord,
-            '1' => LetterAnswerType::Incorrect,
-            '2' => LetterAnswerType::Correct,
-            _ => return Err(format!("Invalid answer value: {}", answer)),
-        };
-        Ok(LetterAnswer{letter, answer})
-    }).collect()
+    let letters = letters.to_uppercase().chars().collect::<Vec<_>>();
+    let numbers = numbers.chars().map(|c| { match c {
+        '0' => LetterAnswerType::NotInWord,
+        '1' => LetterAnswerType::Incorrect,
+        _   => LetterAnswerType::Correct,
+    }}).collect::<Vec<_>>();
+    if letters.len() != numbers.len() {
+        return Err(format!("Invalid token: {:?}, there are {} letters and {} numbers", token, letters.len(), numbers.len()));
+    }
+
+    Ok(zip(letters.into_iter(), numbers.into_iter()).map(|(letter, answer)| LetterAnswer{ letter, answer }).collect())
 }
 
 fn filter<'a, T: AsRef<str>>(clue: &WordClue, words: &'a [T]) -> Vec<&'a str> {
@@ -270,11 +275,12 @@ async fn api_most_common(path: web::Path<usize>, state: web::Data<AppState>) -> 
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let corpus = fs::read_to_string("data/corpus.txt")
+    let corpus = fs::read_to_string(env::var("CORPUS_FILE").unwrap())
         .expect("Failed to read corpus.txt").lines()
-        .sorted_by_key(|w| w.len())
-        .group_by(|w| w.len()).into_iter()
-        .map(|(l, w)| (l, w.into_iter().map(String::from).collect_vec()))
+        .map(|w| (w.chars().count(), w))
+        .sorted_by_key(|(l,_)| *l)
+        .group_by(|(l,_)| *l).into_iter()
+        .map(|(l, w)| (l, w.into_iter().map(|(_,w)| w).map(String::from).collect_vec()))
         .collect::<Vec<_>>();
     let most_common = corpus.iter().map(|(n, words)|{
         let mut freq = words.iter().map(|w| get_frequency(w)).fold(Vec::new(), |mut acc, f| {
